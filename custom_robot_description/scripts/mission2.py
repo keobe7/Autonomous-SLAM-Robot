@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-mission_runner.py
------------------
-Sends a sequence of Nav2 goals using the FollowWaypoints action server.
-
-Usage:
-    ros2 run <your_package> mission_runner
-    -- OR --
-    python3 mission_runner.py   (if sourced into a ROS2 workspace)
-
-Requirements:
-    - Nav2 stack running (nav2_bringup)
-    - A valid map loaded and localization active (e.g. AMCL)
-    - The robot must have an initial pose set before running this node
-"""
-
 import math
 
 import rclpy
@@ -24,16 +8,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import FollowWaypoints
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def yaw_to_quaternion(yaw_rad: float) -> tuple[float, float, float, float]:
-    """Convert a yaw angle (radians) to a quaternion (x, y, z, w).
-
-    Assumes roll = pitch = 0, which is standard for a ground robot.
-    """
     return (
         0.0,
         0.0,
@@ -49,7 +24,6 @@ def make_pose(
     yaw_deg: float,
     frame_id: str = "map",
 ) -> PoseStamped:
-    """Build a stamped pose from (x, y) metres and a yaw in **degrees**."""
     pose = PoseStamped()
     pose.header.frame_id = frame_id
     pose.header.stamp = node.get_clock().now().to_msg()
@@ -66,18 +40,6 @@ def make_pose(
 
     return pose
 
-
-# ---------------------------------------------------------------------------
-# Mission definition
-# ---------------------------------------------------------------------------
-# Each waypoint is a dict with:
-#   name    - human-readable label shown in the logs
-#   x, y    - position in the MAP frame (metres)
-#   yaw_deg - heading the robot should arrive at (degrees, 0 = +X axis)
-#
-# Edit this list to match your environment.
-# ---------------------------------------------------------------------------
-
 WAYPOINTS = [
     {"name": "Entrance",     "x":  -1.22706,  "y":  -1.00653,  "yaw_deg":   87.8},
     {"name": "Checkpoint A", "x":  -0.344933,  "y":  0.0226187,  "yaw_deg":  -17.35},
@@ -88,37 +50,21 @@ WAYPOINTS = [
     {"name": "End",     "x":  -1.22706,  "y":  -1.00653,  "yaw_deg":   87.8}
 ]
 
-# Frame that the waypoints are expressed in.
-# "map" is correct when AMCL / slam_toolbox is running.
-# Use "odom" only for odometry-only tests with no localisation.
 FRAME_ID = "map"
 
 
-# ---------------------------------------------------------------------------
-# ROS 2 node
-# ---------------------------------------------------------------------------
-
 class MissionRunner(Node):
-    """Sends the WAYPOINTS list to Nav2 via the FollowWaypoints action server."""
-
     def __init__(self):
         super().__init__("mission_runner")
 
         self._client = ActionClient(self, FollowWaypoints, "follow_waypoints")
         self._goal_handle = None
 
-        # Kick off the mission once the node is spinning.
         self.create_timer(0.5, self._start_mission)
 
-    # ------------------------------------------------------------------
-    # Mission launch
-    # ------------------------------------------------------------------
 
     def _start_mission(self):
-        """Called once after spin starts. Connects to Nav2 and sends goals."""
-
-        # Only run once.
-        self.destroy_timer(self._timers[0])  # Remove the one-shot timer.
+        self.destroy_timer(self._timers[0])
 
         self.get_logger().info("=" * 55)
         self.get_logger().info("  Mission Runner — Nav2 FollowWaypoints")
@@ -134,13 +80,11 @@ class MissionRunner(Node):
             )
         self.get_logger().info("-" * 55)
 
-        # Build PoseStamped list.
         poses = [
             make_pose(self, wp["x"], wp["y"], wp["yaw_deg"], FRAME_ID)
             for wp in WAYPOINTS
         ]
 
-        # Wait for the action server to become available.
         self.get_logger().info("Waiting for Nav2 'follow_waypoints' server...")
         if not self._client.wait_for_server(timeout_sec=10.0):
             self.get_logger().error(
@@ -149,7 +93,6 @@ class MissionRunner(Node):
             rclpy.shutdown()
             return
 
-        # Send the goal.
         goal_msg = FollowWaypoints.Goal()
         goal_msg.poses = poses
 
@@ -159,10 +102,6 @@ class MissionRunner(Node):
             feedback_callback=self._on_feedback,
         )
         send_future.add_done_callback(self._on_goal_response)
-
-    # ------------------------------------------------------------------
-    # Action callbacks
-    # ------------------------------------------------------------------
 
     def _on_goal_response(self, future):
         self._goal_handle = future.result()
@@ -178,7 +117,6 @@ class MissionRunner(Node):
 
     def _on_feedback(self, feedback_msg):
         idx = feedback_msg.feedback.current_waypoint
-        # Guard against an index that is out of range (Nav2 sends index 0-based).
         if idx < len(WAYPOINTS):
             name = WAYPOINTS[idx]["name"]
             self.get_logger().info(
@@ -187,7 +125,7 @@ class MissionRunner(Node):
 
     def _on_result(self, future):
         result = future.result().result
-        missed = result.missed_waypoints  # List[int32] of skipped indices.
+        missed = result.missed_waypoints
 
         self.get_logger().info("=" * 55)
         if missed:
@@ -205,20 +143,12 @@ class MissionRunner(Node):
 
         rclpy.shutdown()
 
-    # ------------------------------------------------------------------
-    # Graceful cancel on Ctrl-C
-    # ------------------------------------------------------------------
-
     def destroy_node(self):
         if self._goal_handle is not None:
             self.get_logger().info("Cancelling active goal before shutdown...")
             self._goal_handle.cancel_goal_async()
         super().destroy_node()
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main(args=None):
     rclpy.init(args=args)
